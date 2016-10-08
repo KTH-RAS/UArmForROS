@@ -1,0 +1,31 @@
+# Request
+
+geometry_msgs/Point position # Desired movement position
+int32 move_mode
+float32 movement_duration  # Time for moving to the desired position
+int32 path_type
+int32 ease_type
+
+int32 ABSOLUTE_MOVEMENT = 0 # position is absolute in the robot frame
+int32 RELATIVE_MOVEMENT = 1 # position is w.r.t the current end effector position
+int32 LINEAR_PATH = 0 # Arm will move linearly in the cartesian space
+int32 ANGULAR_PATH = 1 # Arm will move... ?
+
+# Interpolation types for arm movement (ease_type)
+#
+# Linear interpolation uses constant arm movement speed
+# Ease in will accelerate more at first and slow down progressively
+# Ease out starts with a slow movement that increases at the end
+# Ease in-out will start and finish slowly, with the accelaration halfway throught the movement
+
+int32 INTERP_EASE_INOUT_CUBIC = 0
+int32 INTERP_LINEAR = 1
+int32 INTERP_EASE_INOUT = 2
+int32 INTERP_EASE_IN = 3
+int32 INTERP_EASE_OUT
+
+---
+# Response
+
+geometry_msgs/Point position # actual arm position after execution of the request
+duration elapsed # ammount of time to execute request

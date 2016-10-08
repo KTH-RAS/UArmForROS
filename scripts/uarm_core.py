@@ -30,6 +30,12 @@ from uarm.msg import Angles
 from uarm.msg import Coords
 from uarm.msg import CoordsWithTime
 from uarm.msg import CoordsWithTS4
+from uarm.srv import MoveTo
+
+
+def handle_move_to(request):
+    """Process a MoveTo service request."""
+    
 
 
 def readCurrentCoords():
@@ -479,6 +485,8 @@ def listener():
     rospy.Subscriber("move_to", Coords, moveToCallback)
     rospy.Subscriber("move_to_time", CoordsWithTime, moveToTimeCallback)
     rospy.Subscriber("move_to_time_s4", CoordsWithTS4, moveToTimeAndS4Callback)
+
+    rospy.Service("uarm/move_to", MoveTo, handle_move_to)
 
     rospy.spin()
     pass
