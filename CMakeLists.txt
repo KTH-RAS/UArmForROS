@@ -21,6 +21,7 @@ add_message_files(
 add_service_files(
   FILES
   MoveTo.srv
+  GetPositions.srv
 )
 
 generate_messages(

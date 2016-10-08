@@ -11,7 +11,7 @@
 # Copyright(C) 2016 uArm Team. All right reserved.
 
 '''
-
+from IPython import embed
 
 # All libraries needed to import
 # Import system library
@@ -22,6 +22,8 @@ import rospy
 # Import uarm for python library
 import pyuarm
 
+import geometry_msgs
+
 # Import messages type
 from std_msgs.msg import String
 from std_msgs.msg import UInt8
@@ -30,12 +32,83 @@ from uarm.msg import Angles
 from uarm.msg import Coords
 from uarm.msg import CoordsWithTime
 from uarm.msg import CoordsWithTS4
-from uarm.srv import MoveTo
+from uarm.srv import MoveTo, MoveToResponse
+from uarm.srv import GetPositions, GetPositionsResponse
+
+
+def handle_get_positions(request):
+    """Process a GetPositions request."""
+    rospy.loginfo("A GetPositions request has been received. Processing...")
+    response = GetPositionsResponse()
+    response.position = getPosition()
+
+    angles = [uarm.read_servo_angle(0, 1), uarm.read_servo_angle(1, 1), uarm.read_servo_angle(2, 1), uarm.read_servo_angle(3, 1)]
+    response.angles = angles
+    return response
 
 
 def handle_move_to(request):
     """Process a MoveTo service request."""
-    
+    begin_time = rospy.Time.now()
+    move_position = request.position
+    move_mode = request.move_mode
+    duration = request.movement_duration
+    path_type = request.path_type
+    ease_type = request.ease_type
+
+    if move_mode != request.ABSOLUTE_MOVEMENT and move_mode != request.RELATIVE_MOVEMENT:
+        rospy.logerr("MoveTo request contains an invalid move mode. Aborting.")
+        return createMoveToError(begin_time)
+
+    if duration.to_sec() <= 0.0:
+        rospy.logerr("MoveTo request contains an invalid duration (must be > 0.0). Aborting.")
+        return createMoveToError(begin_time)
+
+    if path_type != request.LINEAR_PATH and path_type != request.ANGULAR_PATH:
+        rospy.logerr("MoveTo request contains an invalid path type. Aborting.")
+        return createMoveToError(begin_time)
+
+    if ease_type != request.INTERP_EASE_INOUT_CUBIC and ease_type != request.INTERP_LINEAR and \
+       ease_type != request.INTERP_EASE_INOUT and ease_type != request.INTERP_EASE_IN and ease_type != request.INTERP_EASE_OUT:
+        rospy.logerr("MoveTo request contains an invalid ease type. Aborting")
+        return createMoveToError(begin_time)
+
+    rospy.loginfo("A proper MoveTo request has been received. Processing...")
+    if move_position.y > 0:
+        move_position.y = -move_position.y
+    elif move_mode == request.RELATIVE_MOVEMENT:
+        move_position.y = - move_position.y
+
+    uarm.move_to(move_position.x, move_position.y, move_position.z, None, move_mode, duration.to_sec(), path_type, ease_type)
+    rospy.sleep(duration.to_sec())
+    response = MoveToResponse()
+    move_time = rospy.Time.now()
+    response.position = getPosition()
+    response.elapsed = move_time - begin_time
+    response.error = False
+    return response
+
+
+def getPosition():
+    """Return a geometry msgs position filled with the current uarm position."""
+    position = geometry_msgs.msg.Point()
+    current_position = uarm.read_coordinate()
+    position.x = float(current_position[0])
+    position.y = -float(current_position[1])
+    position.z = float(current_position[2])
+
+    return position
+
+
+def createMoveToError(init_time):
+    """Return a MoveToResponse filled with information and positive error flag."""
+    response = MoveToResponse()
+    response.position = getPosition()
+    current_time = rospy.Time.now()
+    response.elapsed = current_time - init_time
+    response.error = True
+
+    return response
 
 
 def readCurrentCoords():
@@ -344,7 +417,7 @@ def pumpStrCallack(data):
 
 
 def writeAnglesCallback(servos):
-    """angles control function once received data from topic."""
+    """control angles once  data is received from topic."""
     servo = {}
     servo['s1'] = servos.servo_1
     servo['s2'] = servos.servo_2
@@ -487,6 +560,7 @@ def listener():
     rospy.Subscriber("move_to_time_s4", CoordsWithTS4, moveToTimeAndS4Callback)
 
     rospy.Service("uarm/move_to", MoveTo, handle_move_to)
+    rospy.Service("uarm/get_positions", GetPositions, handle_get_positions)
 
     rospy.spin()
     pass

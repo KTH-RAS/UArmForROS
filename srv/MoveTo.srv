@@ -2,12 +2,15 @@
 
 geometry_msgs/Point position # Desired movement position
 int32 move_mode
-float32 movement_duration  # Time for moving to the desired position
+duration movement_duration  # Time for moving to the desired position
 int32 path_type
 int32 ease_type
 
+# Move modes
 int32 ABSOLUTE_MOVEMENT = 0 # position is absolute in the robot frame
 int32 RELATIVE_MOVEMENT = 1 # position is w.r.t the current end effector position
+
+# Path types
 int32 LINEAR_PATH = 0 # Arm will move linearly in the cartesian space
 int32 ANGULAR_PATH = 1 # Arm will move... ?
 
@@ -22,10 +25,11 @@ int32 INTERP_EASE_INOUT_CUBIC = 0
 int32 INTERP_LINEAR = 1
 int32 INTERP_EASE_INOUT = 2
 int32 INTERP_EASE_IN = 3
-int32 INTERP_EASE_OUT
+int32 INTERP_EASE_OUT = 4
 
 ---
 # Response
 
 geometry_msgs/Point position # actual arm position after execution of the request
 duration elapsed # ammount of time to execute request
+bool error # if true, an error has been detected and no movement was produced
