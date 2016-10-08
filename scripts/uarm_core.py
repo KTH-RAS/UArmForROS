@@ -11,8 +11,6 @@
 # Copyright(C) 2016 uArm Team. All right reserved.
 
 '''
-from IPython import embed
-
 # All libraries needed to import
 # Import system library
 import sys
