@@ -1,6 +1,15 @@
 #! /usr/bin/env python
+'''
 
-#TODO do we have a license?
+# File Name : kth_uarm.py
+# Authors : Joshua Haustein
+# Version : V1.00
+# Date : 18 Oct, 2016
+# Date : 20 Oct, 2016
+# Description : This module contains a wrapper class of the UArm Python interface developed for the
+                KTH course DD2425 Robotics and Autonomous Systems.
+
+'''
 
 import pyuarm
 import math
@@ -45,10 +54,232 @@ class KTHUarm(object):
         self._logger = logging.getLogger(__name__)
         self._uarm = pyuarm.get_uarm()
         self._offsets = numpy.array([])
+        self._pump_status = False
         if calibration_file_name is not None:
             self.load_calibration(calibration_file_name)
         if self._calibrated:
             self.attach_all_servos()
+
+    ############################### PRIVATE FUNCTIONS ##############################
+    def _to_raw_arm_configuration(self, values):
+        # maps the given values to the raw servo angles (without offsets)
+        return map(lambda x, y: x + y, values, self._offsets)
+
+    def _check_calibration(self):
+        # Throws an exception if not calibrated
+        if not self._calibrated:
+            raise ValueError('The uarm is not properly calibrated. Please execute the calibration first!')
+
+    def _cubic_interpolation(self, start_value, distance, t):
+        return start_value + 3.0 * distance * t * t - 2.0 * distance * t * t * t
+
+    def _linear_interpolation(self, start_value, distance, t):
+        return start_value + t * distance
+
+    def _interpolate(self, start_values, target_values, num_steps, interpolation_type='Linear'):
+        interpolation_func = None
+        if interpolation_type == 'Linear':
+            interpolation_func = self._linear_interpolation
+        elif interpolation_type == 'Cubic':
+            interpolation_func = self._cubic_interpolation
+        elif interpolation_type == 'None' or interpolation_type == None:
+            return None
+        else:
+            self._logger.error('Unkown interpolation type: ' + str(interpolation_type))
+            raise ValueError('Invalid interpolation type ' + interpolation_type)
+        distances = map(lambda x,y: x - y, target_values, start_values)
+        t_step = 1.0 / num_steps
+        values = []
+        for i in range(int(num_steps) + 1):
+            t = i * t_step
+            # we interpolate a point using cubic interpolation
+            interpolated_config = map(interpolation_func,
+                                      start_values,
+                                      distances,
+                                      self.NUM_JOINTS * [t])
+            values.append(interpolated_config)
+        return values
+
+    def _move_servos(self, config):
+        [j0, j1, j2, j3] = self._to_raw_arm_configuration(config)
+        self._uarm.write_servo_angle(pyuarm.SERVO_BOTTOM, j0, with_offset=False)
+        self._uarm.write_servo_angle(pyuarm.SERVO_LEFT, j1, with_offset=False)
+        self._uarm.write_servo_angle(pyuarm.SERVO_RIGHT, j2, with_offset=False)
+        self._uarm.write_servo_angle(pyuarm.SERVO_HAND, j3, with_offset=False)
+
+    ################################################################################
+    def attach_all_servos(self):
+        """ Attaches all servos. Attached servos should not be moved by hand! The servos need to be attached
+            in order for the arm to move. """
+        self._uarm.attach_all_servos()
+
+    def calibrate(self, file_name=None):
+        """ Calibrates the arm. Note that this requires you to manually move the arm.
+            @param file_name - if provided, the calibration is stored in the specified file.
+        """
+        self._uarm.detach_all_servos()
+        achar = 'n'
+        while not achar == 'y':
+            achar = raw_input('Please move the arm into the calibration configuration. Once this is done, type y:')
+        joint_values = self._uarm.read_servo_angle(with_offset=False)
+        self._uarm.attach_all_servos()
+        offsets = map(lambda x, y: x - y, joint_values, self.CALIBRATION_CONFIG)
+        self._offsets = numpy.array(offsets)
+        self._calibrated = True
+        if file_name is not None:
+            offsets_as_dict = {}
+            for i in range(self.NUM_JOINTS):
+                offsets_as_dict[self.JOINT_NAMES[i]] = offsets[i]
+            try:
+                afile = open(file_name, 'w')
+                yaml.dump(offsets_as_dict, afile)
+                afile.close()
+            except IOError as err:
+                self._logger.error('Could not save calibration in file ' + file_name)
+                self._logger.error(err.msg)
+
+    def detach_all_servos(self):
+        """ Detaches all servos. This allows moving the servos to any desired configuration by hand. """
+        self._uarm.detach_all_servos()
+
+    def forward_kinematics(self, j0=0.0, j1=0.0, j2=0.0, j3=0.0, config=None):
+        """ Returns a the position (x,y,z) and theta for the given configuration.
+            Either:
+            @param j0 - angle of joint 0 (in degrees)
+            @param j1 - angle of joint 1 (in degrees)
+            @param j2 - angle of joint 2 (in degrees)
+            @param j3 - angle of joint 3 (in degrees)
+            Or:
+            @param config - iterable of joint angles [j0, j1, j2, j3] (in degrees)
+            In case config is specified, the arguments j0, j1, j2, j3 are ignored.
+            @return (x,y,z) as numpy array and theta, i.e. (x, y, z), theta
+        """
+        if config is not None:
+            [j0, j1, j2, j3] = config
+        # if not self.in_joint_limits(j0, j1, j2, j3):
+            # return None
+        y_prime = self.L2 + self.L3 * math.cos(j1 * math.pi / 180.0) + self.L4 * math.cos(j2 * math.pi /
+                                                                                          180.0) + self.L5
+        x = y_prime * math.cos(j0 * math.pi / 180.0)
+        y = y_prime * math.sin(j0 * math.pi / 180.0)
+        z = self.L1 + self.L3 * math.sin(j1 * math.pi / 180.0) - self.L4 * math.sin(j2 * math.pi / 180.0) - self.L6
+        theta = j0 - j3
+        return numpy.array([x,y,z]), theta
+
+    def get_configuration(self):
+        """ Returns the current configuration of the arm.
+            Note that the arm needs to be calibrated for this!
+            @return numpy array (j0, j1, j2, j3)
+        """
+        self._check_calibration()
+        values = self._uarm.read_servo_angle(with_offset=False)
+        return numpy.array(map(lambda x, y: x - y, values, self._offsets))
+
+    def get_position(self):
+        """ Returns the current end-effector position and orientation.
+            @return numpy array (x,y,z)
+        """
+        current_config = self.get_configuration()
+        position, theta = self.forward_kinematics(config=current_config)
+        return position
+
+    def get_pose(self):
+        """ Returns the current pose of the end-effector.
+            @return numpy array (x,y,z), float theta
+        """
+        current_config = self.get_configuration()
+        return self.forward_kinematics(config=current_config)
+
+    def inverse_kinematics(self, x, y, z, theta, check_limits=True):
+        """ Returns the configuration [j0, j1, j2, j3] such that the end-effector reaches the position
+            x,y,z.
+            @param x - cartesian position in cm
+            @param y - cartesian position in cm
+            @param z - cartesian position in cm
+            @param theta - orientation of eef in degrees
+            @param check_limits - if true, a solution is only returned if it is within limits
+            @return numpy array of the configuration achieving the desired position or None,
+                    if position is not reachable (and check_limits == True).
+        """
+        # The rotation of the first joint is directly given by the orientation of the arm.
+        theta_0 = math.atan2(y, x)
+        # The other two angles can be computed by reducing the problem to a plane (2D)
+        # Compute how far the eef is away from the origin
+        # There are two ways of doing this, choose the numerically stabler option
+        if abs(math.cos(theta_0)) < abs(math.sin(theta_0)):
+            arm_stretch = y / math.sin(theta_0)
+        else:
+            arm_stretch = x / math.cos(theta_0)
+        # Let's now compute the position of the screw next to eef in a 2D plane in respect to joint j1
+        y_prime = arm_stretch - self.L2 - self.L5
+        z_prime = z - self.L1 + self.L6
+        # make a sanity check here, y_prime has to be positive
+        if y_prime <= 0.0:
+            self._logger.info('Can not compute IK, y_prime invalid: ' + str(y_prime))
+            return None
+        # Given these coordinates in a plane (with respect to joint j1), we can compute
+        # theta_1, theta_2 using geometric relations (applying the law of cosines)
+        # For this, consider the triangle spanned by link 3 (L3), link 4 (L4)
+        # and the line (r) connecting the screw on the eef with the origin of joint 1
+        # This triangle is rotated around the axis of joint 1 by theta_prime:
+        theta_prime = math.atan2(z_prime, y_prime)
+        r_2 = y_prime * y_prime + z_prime * z_prime  # this is r * r, which is > 0
+        # The angle alpha between r and L3 is given by the law of cosines:
+        acos_arg = (self.L3 * self.L3 + r_2 - self.L4 * self.L4) / (2.0 * self.L3 * math.sqrt(r_2))
+        if abs(acos_arg) > 1.0:
+            # if this is the case, we do not have a valid triangle, i.e. the position is out of reach
+            self._logger.info('Can not compute IK, acos_arg invalid: ' + str(acos_arg))
+            return None
+        alpha = math.acos(acos_arg)
+        # With this we get theta_1:
+        theta_1 = theta_prime + alpha
+        # Now, we can easily compute theta_2, by choosing it such that we reach the demanded z
+        # i.e. it has to be L3 * sin(theta_1) - L4 * sin(theta_2) = z_prime:
+        asin_arg = (self.L3 * math.sin(theta_1) - z_prime) / self.L4
+        # in case the argument for the asin is of greater magnitude than 1.0, we can not reach the point
+        if abs(asin_arg) > 1.0:
+            self._logger.info('Can not compute IK, asin_arg invalid: ' + str(asin_arg))
+            return None
+        theta_2 = math.asin(asin_arg)
+        # Compute theta 3 according to desired eef orientation (j3 rotates in the opposite direction of j0)
+        theta_3 = theta_0 - theta * math.pi / 180.0
+        # Finally, transform all thetas into degrees and return them as numpy array
+        config = numpy.array([theta_0 * 180.0 / math.pi,
+                              theta_1 * 180.0 / math.pi,
+                              theta_2 * 180.0 / math.pi,
+                              theta_3 * 180.0 / math.pi])
+        if self.in_joint_limits(*config) or not check_limits:
+            return config
+        else:
+            self._logger.info('Computed IK solution is not within joint limits: ' + str(config))
+            return None
+
+    def in_joint_limits(self, j0, j1, j2, j3):
+        """ Returns True iff the given joint values are within the respective limits.
+            Note that this function is based on approximations of the arm kinematics.
+            There may be valid configurations that this function identifies as invalid.
+            On the other hand, it may identify a configuration as valid although it results in self
+            collisions.
+            @param j0 - angle of joint 0 (in degrees)
+            @param j1 - angle of joint 1 (in degrees)
+            @param j2 - angle of joint 2 (in degrees)
+            @param j3 - angle of joint 3 (in degrees)
+            @return True or False depending on whether the given values are witin the limits
+        """
+        # first check j0
+        if j0 < self.LOWER_LIMITS[0] or j0 > self.UPPER_LIMITS[0]:
+            return False
+        # next check j1:
+        if j1 < self.LOWER_LIMITS[1] or j1 > self.UPPER_LIMITS[1]:
+            return False
+        # next check j2:
+        # this is where it gets tricky! the limits of j2 depend on the current value of j1
+        if j2 < max(self.LOWER_LIMITS[2], self.J2_J1_MIN_LIMIT_OFFSET - j1) or \
+           j2 > min(self.UPPER_LIMITS[2], self.J2_J1_MAX_LIMIT_OFFSET - j1):
+            return False
+        if j3 < self.LOWER_LIMITS[3] or j3 > self.UPPER_LIMITS[3]:
+            return False
+        return True
 
     def load_calibration(self, file_name):
         """ Loads the arm calibration from the given file.
@@ -80,39 +311,6 @@ class KTHUarm(object):
             self._logger.error('Could not read configuration file ' + file_name)
             self._logger.error(err.msg)
         return False
-
-    def calibrate(self, file_name=None):
-        """ Calibrates the arm. Note that this requires you to manually move the arm.
-            @param file_name - if provided, the calibration is stored in the specified file.
-        """
-        self._uarm.detach_all_servos()
-        achar = 'n'
-        while not achar == 'y':
-            achar = raw_input('Please move the arm into the calibration configuration. Once this is done, type y:')
-        joint_values = self._uarm.read_servo_angle(with_offset=False)
-        self._uarm.attach_all_servos()
-        offsets = map(lambda x, y: x - y, joint_values, self.CALIBRATION_CONFIG)
-        self._offsets = numpy.array(offsets)
-        self._calibrated = True
-        if file_name is not None:
-            offsets_as_dict = {}
-            for i in range(self.NUM_JOINTS):
-                offsets_as_dict[self.JOINT_NAMES[i]] = offsets[i]
-            try:
-                afile = open(file_name, 'w')
-                yaml.dump(offsets_as_dict, afile)
-                afile.close()
-            except IOError as err:
-                self._logger.error('Could not save calibration in file ' + file_name)
-                self._logger.error(err.msg)
-
-    def get_configuration(self):
-        """ Returns the current configuration of the arm.
-            Note that the arm needs to be calibrated for this!
-        """
-        self._check_calibration()
-        values = self._uarm.read_servo_angle(with_offset=False)
-        return map(lambda x, y: x - y, values, self._offsets)
 
     def move_cartesian(self, x=None, y=None, z=None, theta=None, interpolation_type=None, duration=None,
                        check_limits=True):
@@ -238,187 +436,18 @@ class KTHUarm(object):
                          duration=duration,
                          check_limits=check_limits)
 
-    def detach_all_servos(self):
-        """ Detaches all servos. This allows moving the servos to any desired configuration by hand. """
-        self._uarm.detach_all_servos()
-
-    def attach_all_servos(self):
-        """ Attaches all servos. Attached servos should not be moved by hand! The servos need to be attached
-            in order for the arm to move. """
-        self._uarm.attach_all_servos()
-
-    def get_position(self):
-        """ Returns the current end-effector position and orientation."""
-        current_config = self.get_configuration()
-        position, theta = self.forward_kinematics(config=current_config)
-        return position
-
-    def get_pose(self):
-        """ Returns the current pose of the end-effector. """
-        current_config = self.get_configuration()
-        return self.forward_kinematics(config=current_config)
-
-    def forward_kinematics(self, j0=0.0, j1=0.0, j2=0.0, j3=0.0, config=None):
-        """ Returns a the position (x,y,z) and theta for the given configuration.
-            Either:
-            @param j0 - angle of joint 0 (in degrees)
-            @param j1 - angle of joint 1 (in degrees)
-            @param j2 - angle of joint 2 (in degrees)
-            @param j3 - angle of joint 3 (in degrees)
-            Or:
-            @param config - iterable of joint angles [j0, j1, j2, j3] (in degrees)
-            In case config is specified, the arguments j0, j1, j2, j3 are ignored.
-            @return (x,y,z) as numpy array and theta, i.e. (x, y, z), theta
+    def pump(self, pump_status):
+        """ Activates/Deactivates the pump.
+            @param pump_state - True = pump on, False = pump off
         """
-        if config is not None:
-            [j0, j1, j2, j3] = config
-        # if not self.in_joint_limits(j0, j1, j2, j3):
-            # return None
-        y_prime = self.L2 + self.L3 * math.cos(j1 * math.pi / 180.0) + self.L4 * math.cos(j2 * math.pi /
-                                                                                          180.0) + self.L5
-        x = y_prime * math.cos(j0 * math.pi / 180.0)
-        y = y_prime * math.sin(j0 * math.pi / 180.0)
-        z = self.L1 + self.L3 * math.sin(j1 * math.pi / 180.0) - self.L4 * math.sin(j2 * math.pi / 180.0) - self.L6
-        theta = j0 - j3
-        return numpy.array([x,y,z]), theta
+        self._uarm.pump_control(pump_status)
+        self._pump_status = pump_status
 
-    def inverse_kinematics(self, x, y, z, theta, check_limits=True):
-        """ Returns the configuration [j0, j1, j2, j3] such that the end-effector reaches the position
-            x,y,z.
-            @param x - cartesian position in cm
-            @param y - cartesian position in cm
-            @param z - cartesian position in cm
-            @param theta - orientation of eef in degrees
-            @param check_limits - if true, a solution is only returned if it is within limits
-            @return numpy array of the configuration achieving the desired position or None,
-                    if position is not reachable (and check_limits == True).
+    def is_sucking(self):
+        """ Returns whether the pump is turned on or not.
+            @param bool - True if pump is on, else False
         """
-        # The rotation of the first joint is directly given by the orientation of the arm.
-        theta_0 = math.atan2(y, x)
-        # The other two angles can be computed by reducing the problem to a plane (2D)
-        # Compute how far the eef is away from the origin
-        # There are two ways of doing this, choose the numerically stabler option
-        if abs(math.cos(theta_0)) < abs(math.sin(theta_0)):
-            arm_stretch = y / math.sin(theta_0)
-        else:
-            arm_stretch = x / math.cos(theta_0)
-        # Let's now compute the position of the screw next to eef in a 2D plane in respect to joint j1
-        y_prime = arm_stretch - self.L2 - self.L5
-        z_prime = z - self.L1 + self.L6
-        # make a sanity check here, y_prime has to be positive
-        if y_prime <= 0.0:
-            self._logger.info('Can not compute IK, y_prime invalid: ' + str(y_prime))
-            return None
-        # Given these coordinates in a plane (with respect to joint j1), we can compute
-        # theta_1, theta_2 using geometric relations (applying the law of cosines)
-        # For this, consider the triangle spanned by link 3 (L3), link 4 (L4)
-        # and the line (r) connecting the screw on the eef with the origin of joint 1
-        # This triangle is rotated around the axis of joint 1 by theta_prime:
-        theta_prime = math.atan2(z_prime, y_prime)
-        r_2 = y_prime * y_prime + z_prime * z_prime  # this is r * r, which is > 0
-        # The angle alpha between r and L3 is given by the law of cosines:
-        acos_arg = (self.L3 * self.L3 + r_2 - self.L4 * self.L4) / (2.0 * self.L3 * math.sqrt(r_2))
-        if abs(acos_arg) > 1.0:
-            # if this is the case, we do not have a valid triangle, i.e. the position is out of reach
-            self._logger.info('Can not compute IK, acos_arg invalid: ' + str(acos_arg))
-            return None
-        alpha = math.acos(acos_arg)
-        # With this we get theta_1:
-        theta_1 = theta_prime + alpha
-        # Now, we can easily compute theta_2, by choosing it such that we reach the demanded z
-        # i.e. it has to be L3 * sin(theta_1) - L4 * sin(theta_2) = z_prime:
-        asin_arg = (self.L3 * math.sin(theta_1) - z_prime) / self.L4
-        # in case the argument for the asin is of greater magnitude than 1.0, we can not reach the point
-        if abs(asin_arg) > 1.0:
-            self._logger.info('Can not compute IK, asin_arg invalid: ' + str(asin_arg))
-            return None
-        theta_2 = math.asin(asin_arg)
-        # Compute theta 3 according to desired eef orientation (j3 rotates in the opposite direction of j0)
-        theta_3 = theta_0 - theta * math.pi / 180.0
-        # Finally, transform all thetas into degrees and return them as numpy array
-        config = numpy.array([theta_0 * 180.0 / math.pi,
-                              theta_1 * 180.0 / math.pi,
-                              theta_2 * 180.0 / math.pi,
-                              theta_3 * 180.0 / math.pi])
-        if self.in_joint_limits(*config) or not check_limits:
-            return config
-        else:
-            self._logger.info('Computed IK solution is not within joint limits: ' + str(config))
-            return None
-
-    def in_joint_limits(self, j0, j1, j2, j3):
-        """ Returns True iff the given joint values are within the respective limits.
-            Note that this function is based on approximations of the arm kinematics.
-            There may be valid configurations that this function identifies as invalid.
-            On the other hand, it may identify a configuration as valid although it results in self
-            collisions.
-            @param j0 - angle of joint 0 (in degrees)
-            @param j1 - angle of joint 1 (in degrees)
-            @param j2 - angle of joint 2 (in degrees)
-            @param j3 - angle of joint 3 (in degrees)
-            @return True or False depending on whether the given values are witin the limits
-        """
-        # first check j0
-        if j0 < self.LOWER_LIMITS[0] or j0 > self.UPPER_LIMITS[0]:
-            return False
-        # next check j1:
-        if j1 < self.LOWER_LIMITS[1] or j1 > self.UPPER_LIMITS[1]:
-            return False
-        # next check j2:
-        # this is where it gets tricky! the limits of j2 depend on the current value of j1
-        if j2 < max(self.LOWER_LIMITS[2], self.J2_J1_MIN_LIMIT_OFFSET - j1) or \
-           j2 > min(self.UPPER_LIMITS[2], self.J2_J1_MAX_LIMIT_OFFSET - j1):
-            return False
-        if j3 < self.LOWER_LIMITS[3] or j3 > self.UPPER_LIMITS[3]:
-            return False
-        return True
-
-    def _to_raw_arm_configuration(self, values):
-        # maps the given values to the raw servo angles (without offsets)
-        return map(lambda x, y: x + y, values, self._offsets)
-
-    def _check_calibration(self):
-        # Throws an exception if not calibrated
-        if not self._calibrated:
-            raise ValueError('The uarm is not properly calibrated. Please execute the calibration first!')
-
-    def _cubic_interpolation(self, start_value, distance, t):
-        return start_value + 3.0 * distance * t * t - 2.0 * distance * t * t * t
-
-    def _linear_interpolation(self, start_value, distance, t):
-        return start_value + t * distance
-
-    def _interpolate(self, start_values, target_values, num_steps, interpolation_type='Linear'):
-        interpolation_func = None
-        if interpolation_type == 'Linear':
-            interpolation_func = self._linear_interpolation
-        elif interpolation_type == 'Cubic':
-            interpolation_func = self._cubic_interpolation
-        elif interpolation_type == 'None' or interpolation_type == None:
-            return None
-        else:
-            self._logger.error('Unkown interpolation type: ' + str(interpolation_type))
-            raise ValueError('Invalid interpolation type ' + interpolation_type)
-        distances = map(lambda x,y: x - y, target_values, start_values)
-        t_step = 1.0 / num_steps
-        values = []
-        for i in range(int(num_steps) + 1):
-            t = i * t_step
-            # we interpolate a point using cubic interpolation
-            interpolated_config = map(interpolation_func,
-                                      start_values,
-                                      distances,
-                                      self.NUM_JOINTS * [t])
-            values.append(interpolated_config)
-        return values
-
-    def _move_servos(self, config):
-        [j0, j1, j2, j3] = self._to_raw_arm_configuration(config)
-        self._uarm.write_servo_angle(pyuarm.SERVO_BOTTOM, j0, with_offset=False)
-        self._uarm.write_servo_angle(pyuarm.SERVO_LEFT, j1, with_offset=False)
-        self._uarm.write_servo_angle(pyuarm.SERVO_RIGHT, j2, with_offset=False)
-        self._uarm.write_servo_angle(pyuarm.SERVO_HAND, j3, with_offset=False)
-
+        return self._pump_status
 
 def recordJointValues(arm, timeout):
     joint_values = []

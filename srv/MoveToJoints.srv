@@ -1,9 +1,10 @@
 # Request
-geometry_msgs/Point position # Desired movement position
-float32 eef_orientation # desired orientation
+float32 j0
+float32 j1
+float32 j2
+float32 j3
 int32 move_mode # ABSOLUTE_MOVEMENT or RELATIVE_MOVEMENT
 duration movement_duration  # Time for moving to the desired position
-bool ignore_orientation
 int32 interpolation_type
 bool check_limits # Whether to check for joint limits or not
 
@@ -22,6 +23,9 @@ int32 LINEAR_INTERPOLATION = 2
 
 ---
 # Response
-geometry_msgs/Point position # actual arm position after execution of the request
+float32 j0
+float32 j1
+float32 j2
+float32 j3
 duration elapsed # ammount of time to execute request
 bool error # if true, an error has been detected and no movement was produced
