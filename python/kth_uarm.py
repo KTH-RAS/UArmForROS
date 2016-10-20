@@ -6,6 +6,7 @@ import pyuarm
 import math
 import yaml
 import logging
+import time
 import numpy
 
 
@@ -16,13 +17,18 @@ class KTHUarm(object):
         be calibrated before usage. The calibration can be performed by either calling
         the calibrate function or by providing a calibration from a previous run."""
 
-    LOWER_LIMITS = [0.0, -4.9, -4.83, -30.0]
-    UPPER_LIMITS = [180.0, 130.0, 123.8, 30.0]
+    LOWER_LIMITS = [0.0, -4.9, -4.83, -65.0]
+    UPPER_LIMITS = [180.0, 130.0, 123.8, 40.0]
     J2_J1_MIN_LIMIT_OFFSET= 18.5
     J2_J1_MAX_LIMIT_OFFSET = 153.0
     NUM_JOINTS = 4
     JOINT_NAMES = ['joint0', 'joint1', 'joint2', 'joint3']
     CALIBRATION_CONFIG = [45.0, 130.0, -4.83, 0.0]
+    DEFAULT_EXECUTION_SLEEP_TIME = 0.1
+    MAXIMAL_NUM_INTERPOLATION_STEPS = 80.0
+    NO_INTERPOLATION = 'None'
+    LINEAR_INTERPOLATION = 'Linear'
+    CUBIC_INTERPOLATION = 'Cubic'
     # LINKS
     L1 = 10.645
     L2 = 2.117
@@ -36,6 +42,7 @@ class KTHUarm(object):
             @param calibration_file_name - If provided, the arm calibration is read from this file.
         """
         self._calibrated = False
+        self._logger = logging.getLogger(__name__)
         self._uarm = pyuarm.get_uarm()
         self._offsets = numpy.array([])
         if calibration_file_name is not None:
@@ -52,10 +59,10 @@ class KTHUarm(object):
             afile = open(file_name, 'r')
             file_content = yaml.load(afile)
             if type(file_content) is not dict:
-                logging.error('The given file %s does not contain a dictionary of joint offsets' % file_name)
+                self.logger.error('The given file %s does not contain a dictionary of joint offsets' % file_name)
                 return False
             elif len(file_content) < self.NUM_JOINTS:
-                logging.error('The configuration file ' + file_name + ' needs to contain ' + str(self.NUM_JOINTS)
+                self._logger.error('The configuration file ' + file_name + ' needs to contain ' + str(self.NUM_JOINTS)
                               + ' joint offsets, but it contains only ' + str(len(file_content)))
                 return False
             else:
@@ -64,14 +71,14 @@ class KTHUarm(object):
                     if self.JOINT_NAMES[i] in file_content:
                         self._offsets[i] = file_content[self.JOINT_NAMES[i]]
                     else:
-                        logging.error('The configuration file ' + file_name + ' is missing an offset '
+                        self._logger.error('The configuration file ' + file_name + ' is missing an offset '
                                       + ' for joint ' + self.JOINT_NAMES[i])
                         return False
                 self._calibrated = True
                 return self._calibrated
         except IOError as err:
-            logging.error('Could not read configuration file ' + file_name)
-            logging.error(err.msg)
+            self._logger.error('Could not read configuration file ' + file_name)
+            self._logger.error(err.msg)
         return False
 
     def calibrate(self, file_name=None):
@@ -96,8 +103,8 @@ class KTHUarm(object):
                 yaml.dump(offsets_as_dict, afile)
                 afile.close()
             except IOError as err:
-                logging.error('Could not save calibration in file ' + file_name)
-                logging.error(err.msg)
+                self._logger.error('Could not save calibration in file ' + file_name)
+                self._logger.error(err.msg)
 
     def get_configuration(self):
         """ Returns the current configuration of the arm.
@@ -107,13 +114,18 @@ class KTHUarm(object):
         values = self._uarm.read_servo_angle(with_offset=False)
         return map(lambda x, y: x - y, values, self._offsets)
 
-    def move_cartesian(self, x=None, y=None, z=None, theta=None, check_limits=True):
+    def move_cartesian(self, x=None, y=None, z=None, theta=None, interpolation_type=None, duration=None,
+                       check_limits=True):
         """ Moves the arm to the specified x,y,z end-effector position at orientation theta.
             Note that the arm needs to be calibrated for this!
             @param x - absolute x position (in cm), current x if None
             @param y - absolute y position (in cm), current y if None
             @param z - absolute z position (in cm), current z if None
             @param theta - absolute orientation (in degrees), current theta if None
+            @param interpolation_type - Type of interpolation to use:
+                                        None, Linear, Cubic (either string or None)
+            @param duration - desired duration of movement in seconds
+                              (if None, default value is used; only active if interpolation_type is not None)
             @param check_limits - if true, joint limit checks are performed
             @return True/False - True iff execution was attempted.
         """
@@ -129,17 +141,23 @@ class KTHUarm(object):
             theta = current_theta
         goal_config = self.inverse_kinematics(x, y, z, theta, check_limits)
         if goal_config is None:
-            logging.warn('The given position is not reachable, aborting move request.')
+            self._logger.warn('The given position is not reachable, aborting move request.')
             return False
-        return self.move(*goal_config)
+        return self.move(*goal_config, interpolation_type=interpolation_type,
+                         duration=duration, check_limits=check_limits)
 
-    def move_cartesian_relative(self, dx=0.0, dy=0.0, dz=0.0, dtheta=0.0, check_limits=True):
+    def move_cartesian_relative(self, dx=0.0, dy=0.0, dz=0.0, dtheta=0.0, interpolation_type=None,
+                                duration=None, check_limits=True):
         """ Moves the arm's end-effector relative to the current position.
             Note that the arm needs to be calibrated for this!
             @param dx - delta in x
             @param dy - delta in y
             @param dz - delta in z
             @param dtheta - delta in theta
+            @param interpolation_type - Type of interpolation to use:
+                                        None, Linear, Cubic (either string or None)
+            @param duration - desired duration of movement in seconds
+                              (if None, default value is used; only active if interpolation_type is not None)
             @param check_limits - if true, joint limit checks are performed
             @return True/False - True iff execution was attempted
         """
@@ -148,9 +166,12 @@ class KTHUarm(object):
         return self.move_cartesian(current_pos[0] + dx,
                                    current_pos[1] + dy,
                                    current_pos[2] + dz,
-                                   current_theta + dtheta)
+                                   current_theta + dtheta,
+                                   interpolation_type=interpolation_type,
+                                   duration=duration,
+                                   check_limits=check_limits)
 
-    def move(self, j0, j1, j2, j3, check_limits=True):
+    def move(self, j0, j1, j2, j3, interpolation_type=None, duration=None, check_limits=True):
         """ Moves the arm to the specified arm configuration.
             All joint angles are expected to be in degrees.
             Note that the arm needs to be calibrated for this!
@@ -158,6 +179,10 @@ class KTHUarm(object):
             @param j1 - desired angle of joint 1
             @param j2 - desired angle of joint 2
             @param j3 - desired angle of joint 3
+            @param interpolation_type - Type of interpolation to use:
+                                        None, Linear, Cubic (either string or None)
+            @param duration - desired duration of movement in seconds
+                              (if None, default value is used; only active if interpolation_type is not None)
             @param check_limits - if true, joint limit checks are performed
             @return True/False - True iff execution was attempted
         """
@@ -165,20 +190,41 @@ class KTHUarm(object):
         if check_limits:
             if not self.in_joint_limits(j0, j1, j2, j3):
                 return False
-        [j0, j1, j2, j3] = self._to_raw_arm_configuration([j0, j1, j2, j3])
-        self._uarm.write_servo_angle(pyuarm.SERVO_BOTTOM, j0, with_offset=False)
-        self._uarm.write_servo_angle(pyuarm.SERVO_LEFT, j1, with_offset=False)
-        self._uarm.write_servo_angle(pyuarm.SERVO_RIGHT, j2, with_offset=False)
-        self._uarm.write_servo_angle(pyuarm.SERVO_HAND, j3, with_offset=False)
+        # Do interpolation in the same way as they do it in the firmware
+        start_values = self.get_configuration()
+        target_values = [j0, j1, j2, j3]
+        distances = map(lambda x, y: abs(x - y), target_values, start_values)
+        # One interpolation step / degree of maximal changing joint or minimal num of steps
+        num_steps = min(self.MAXIMAL_NUM_INTERPOLATION_STEPS, max(*distances))
+        interpolation_steps = self._interpolate(start_values, target_values, num_steps, interpolation_type)
+        # in case an interpolation method was chosen, interpolate:
+        if interpolation_steps is not None:
+            if duration is None:
+                sleep_time = self.DEFAULT_EXECUTION_SLEEP_TIME
+            else:
+                sleep_time = duration / num_steps
+
+            for i in range(len(interpolation_steps)):
+                self._move_servos(interpolation_steps[i])
+                time.sleep(sleep_time)
+        else:
+            # else just move the servos to the target
+            self._move_servos(target_values)
+
         return True
 
-    def move_relative(self, dj0=0.0, dj1=0.0, dj2=0.0, dj3=0.0, check_limits=True):
+    def move_relative(self, dj0=0.0, dj1=0.0, dj2=0.0, dj3=0.0, interpolation_type=None,
+                      duration=None, check_limits=True):
         """ Moves the arm relative to the current configuration.
             Note that the arm needs to be calibrated for this!
             @param dj0 - delta in joint 0 angle
             @param dj1 - delta in joint 1 angle
             @param dj2 - delta in joint 2 angle
             @param dj3 - delta in joint 3 angle
+            @param interpolation_type - Type of interpolation to use:
+                                        None, Linear, Cubic (either string or None)
+            @param duration - desired duration of movement in seconds
+                              (if None, default value is used; only active if interpolation_type is not None)
             @param check_limits - if true, joint limit checks are performed
             @return True/False - True iff execution was attempted
         """
@@ -188,7 +234,9 @@ class KTHUarm(object):
                          current_config[1] + dj1,
                          current_config[2] + dj2,
                          current_config[3] + dj3,
-                         check_limits)
+                         interpolation_type=interpolation_type,
+                         duration=duration,
+                         check_limits=check_limits)
 
     def detach_all_servos(self):
         """ Detaches all servos. This allows moving the servos to any desired configuration by hand. """
@@ -259,7 +307,7 @@ class KTHUarm(object):
         z_prime = z - self.L1 + self.L6
         # make a sanity check here, y_prime has to be positive
         if y_prime <= 0.0:
-            logging.info('Can not compute IK, y_prime invalid: ' + str(y_prime))
+            self._logger.info('Can not compute IK, y_prime invalid: ' + str(y_prime))
             return None
         # Given these coordinates in a plane (with respect to joint j1), we can compute
         # theta_1, theta_2 using geometric relations (applying the law of cosines)
@@ -272,7 +320,7 @@ class KTHUarm(object):
         acos_arg = (self.L3 * self.L3 + r_2 - self.L4 * self.L4) / (2.0 * self.L3 * math.sqrt(r_2))
         if abs(acos_arg) > 1.0:
             # if this is the case, we do not have a valid triangle, i.e. the position is out of reach
-            logging.info('Can not compute IK, acos_arg invalid: ' + str(acos_arg))
+            self._logger.info('Can not compute IK, acos_arg invalid: ' + str(acos_arg))
             return None
         alpha = math.acos(acos_arg)
         # With this we get theta_1:
@@ -282,7 +330,7 @@ class KTHUarm(object):
         asin_arg = (self.L3 * math.sin(theta_1) - z_prime) / self.L4
         # in case the argument for the asin is of greater magnitude than 1.0, we can not reach the point
         if abs(asin_arg) > 1.0:
-            logging.info('Can not compute IK, asin_arg invalid: ' + str(asin_arg))
+            self._logger.info('Can not compute IK, asin_arg invalid: ' + str(asin_arg))
             return None
         theta_2 = math.asin(asin_arg)
         # Compute theta 3 according to desired eef orientation (j3 rotates in the opposite direction of j0)
@@ -295,7 +343,7 @@ class KTHUarm(object):
         if self.in_joint_limits(*config) or not check_limits:
             return config
         else:
-            logging.info('Computed IK solution is not within joint limits: ' + str(config))
+            self._logger.info('Computed IK solution is not within joint limits: ' + str(config))
             return None
 
     def in_joint_limits(self, j0, j1, j2, j3):
@@ -334,6 +382,43 @@ class KTHUarm(object):
         if not self._calibrated:
             raise ValueError('The uarm is not properly calibrated. Please execute the calibration first!')
 
+    def _cubic_interpolation(self, start_value, distance, t):
+        return start_value + 3.0 * distance * t * t - 2.0 * distance * t * t * t
+
+    def _linear_interpolation(self, start_value, distance, t):
+        return start_value + t * distance
+
+    def _interpolate(self, start_values, target_values, num_steps, interpolation_type='Linear'):
+        interpolation_func = None
+        if interpolation_type == 'Linear':
+            interpolation_func = self._linear_interpolation
+        elif interpolation_type == 'Cubic':
+            interpolation_func = self._cubic_interpolation
+        elif interpolation_type == 'None' or interpolation_type == None:
+            return None
+        else:
+            self._logger.error('Unkown interpolation type: ' + str(interpolation_type))
+            raise ValueError('Invalid interpolation type ' + interpolation_type)
+        distances = map(lambda x,y: x - y, target_values, start_values)
+        t_step = 1.0 / num_steps
+        values = []
+        for i in range(int(num_steps) + 1):
+            t = i * t_step
+            # we interpolate a point using cubic interpolation
+            interpolated_config = map(interpolation_func,
+                                      start_values,
+                                      distances,
+                                      self.NUM_JOINTS * [t])
+            values.append(interpolated_config)
+        return values
+
+    def _move_servos(self, config):
+        [j0, j1, j2, j3] = self._to_raw_arm_configuration(config)
+        self._uarm.write_servo_angle(pyuarm.SERVO_BOTTOM, j0, with_offset=False)
+        self._uarm.write_servo_angle(pyuarm.SERVO_LEFT, j1, with_offset=False)
+        self._uarm.write_servo_angle(pyuarm.SERVO_RIGHT, j2, with_offset=False)
+        self._uarm.write_servo_angle(pyuarm.SERVO_HAND, j3, with_offset=False)
+
 
 def recordJointValues(arm, timeout):
     joint_values = []
@@ -344,6 +429,7 @@ def recordJointValues(arm, timeout):
     return joint_values
 
 if __name__ == '__main__':
+    logging.basicConfig()
     import IPython
     uarm = KTHUarm('test_calibration.yaml')
     IPython.embed()
