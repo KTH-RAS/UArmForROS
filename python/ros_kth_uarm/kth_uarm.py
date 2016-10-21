@@ -31,7 +31,7 @@ class KTHUarm(object):
     J2_J1_MIN_LIMIT_OFFSET= 18.5
     J2_J1_MAX_LIMIT_OFFSET = 153.0
     NUM_JOINTS = 4
-    JOINT_NAMES = ['joint0', 'joint1', 'joint2', 'joint3']
+    JOINT_NAMES = ['j0', 'j1', 'j2', 'j3']
     CALIBRATION_CONFIG = [45.0, 130.0, -4.83, 0.0]
     DEFAULT_EXECUTION_SLEEP_TIME = 0.1
     MAXIMAL_NUM_INTERPOLATION_STEPS = 80.0
@@ -65,10 +65,16 @@ class KTHUarm(object):
         # maps the given values to the raw servo angles (without offsets)
         return map(lambda x, y: x + y, values, self._offsets)
 
+    def _check_connection(self):
+        # Throws an exception if not connected
+        if self._uarm is None:
+            raise RuntimeError('There is no uarm attached.')
+
     def _check_calibration(self):
+        self._check_connection()
         # Throws an exception if not calibrated
         if not self._calibrated:
-            raise ValueError('The uarm is not properly calibrated. Please execute the calibration first!')
+            raise RuntimeError('The uarm is not properly calibrated. Please execute the calibration first!')
 
     def _cubic_interpolation(self, start_value, distance, t):
         return start_value + 3.0 * distance * t * t - 2.0 * distance * t * t * t
@@ -101,6 +107,7 @@ class KTHUarm(object):
         return values
 
     def _move_servos(self, config):
+        self._check_connection()
         [j0, j1, j2, j3] = self._to_raw_arm_configuration(config)
         self._uarm.write_servo_angle(pyuarm.SERVO_BOTTOM, j0, with_offset=False)
         self._uarm.write_servo_angle(pyuarm.SERVO_LEFT, j1, with_offset=False)
@@ -111,12 +118,14 @@ class KTHUarm(object):
     def attach_all_servos(self):
         """ Attaches all servos. Attached servos should not be moved by hand! The servos need to be attached
             in order for the arm to move. """
+        self._check_connection()
         self._uarm.attach_all_servos()
 
     def calibrate(self, file_name=None):
         """ Calibrates the arm. Note that this requires you to manually move the arm.
             @param file_name - if provided, the calibration is stored in the specified file.
         """
+        self._check_connection()
         self._uarm.detach_all_servos()
         achar = 'n'
         while not achar == 'y':
@@ -136,10 +145,11 @@ class KTHUarm(object):
                 afile.close()
             except IOError as err:
                 self._logger.error('Could not save calibration in file ' + file_name)
-                self._logger.error(err.msg)
+                self._logger.error(str(err))
 
     def detach_all_servos(self):
         """ Detaches all servos. This allows moving the servos to any desired configuration by hand. """
+        self._check_connection()
         self._uarm.detach_all_servos()
 
     def forward_kinematics(self, j0=0.0, j1=0.0, j2=0.0, j3=0.0, config=None):
@@ -190,13 +200,17 @@ class KTHUarm(object):
         current_config = self.get_configuration()
         return self.forward_kinematics(config=current_config)
 
+    def has_uarm(self):
+        """ Returns whether this instance is connected to a uarm. """
+        return self._uarm is not None
+
     def inverse_kinematics(self, x, y, z, theta, check_limits=True):
         """ Returns the configuration [j0, j1, j2, j3] such that the end-effector reaches the position
             x,y,z.
             @param x - cartesian position in cm
             @param y - cartesian position in cm
             @param z - cartesian position in cm
-            @param theta - orientation of eef in degrees
+            @param theta - orientation of eef in degrees (if None, it is ignored -> j3 = 0.0)
             @param check_limits - if true, a solution is only returned if it is within limits
             @return numpy array of the configuration achieving the desired position or None,
                     if position is not reachable (and check_limits == True).
@@ -242,7 +256,9 @@ class KTHUarm(object):
             return None
         theta_2 = math.asin(asin_arg)
         # Compute theta 3 according to desired eef orientation (j3 rotates in the opposite direction of j0)
-        theta_3 = theta_0 - theta * math.pi / 180.0
+        theta_3 = 0.0
+        if theta is not None:
+            theta_3 = theta_0 - theta * math.pi / 180.0
         # Finally, transform all thetas into degrees and return them as numpy array
         config = numpy.array([theta_0 * 180.0 / math.pi,
                               theta_1 * 180.0 / math.pi,
@@ -281,6 +297,16 @@ class KTHUarm(object):
             return False
         return True
 
+    def is_calibrated(self):
+        """ Returns whether this uarm is calibrated. """
+        return self._calibrated
+
+    def is_sucking(self):
+        """ Returns whether the pump is turned on or not.
+            @param bool - True if pump is on, else False
+        """
+        return self._pump_status
+
     def load_calibration(self, file_name):
         """ Loads the arm calibration from the given file.
             @param file_name - path to the file
@@ -309,7 +335,7 @@ class KTHUarm(object):
                 return self._calibrated
         except IOError as err:
             self._logger.error('Could not read configuration file ' + file_name)
-            self._logger.error(err.msg)
+            self._logger.error(str(err))
         return False
 
     def move_cartesian(self, x=None, y=None, z=None, theta=None, interpolation_type=None, duration=None,
@@ -319,7 +345,7 @@ class KTHUarm(object):
             @param x - absolute x position (in cm), current x if None
             @param y - absolute y position (in cm), current y if None
             @param z - absolute z position (in cm), current z if None
-            @param theta - absolute orientation (in degrees), current theta if None
+            @param theta - absolute orientation (in degrees), ignored if None
             @param interpolation_type - Type of interpolation to use:
                                         None, Linear, Cubic (either string or None)
             @param duration - desired duration of movement in seconds
@@ -335,8 +361,6 @@ class KTHUarm(object):
             y = current_pos[1]
         if z is None:
             z = current_pos[2]
-        if theta is None:
-            theta = current_theta
         goal_config = self.inverse_kinematics(x, y, z, theta, check_limits)
         if goal_config is None:
             self._logger.warn('The given position is not reachable, aborting move request.')
@@ -351,7 +375,7 @@ class KTHUarm(object):
             @param dx - delta in x
             @param dy - delta in y
             @param dz - delta in z
-            @param dtheta - delta in theta
+            @param dtheta - delta in theta (if None, theta is ignored and only the position is considered)
             @param interpolation_type - Type of interpolation to use:
                                         None, Linear, Cubic (either string or None)
             @param duration - desired duration of movement in seconds
@@ -361,10 +385,11 @@ class KTHUarm(object):
         """
         self._check_calibration()
         current_pos, current_theta = self.get_pose()
+        target_theta = current_theta + dtheta if dtheta is not None else None
         return self.move_cartesian(current_pos[0] + dx,
                                    current_pos[1] + dy,
                                    current_pos[2] + dz,
-                                   current_theta + dtheta,
+                                   target_theta,
                                    interpolation_type=interpolation_type,
                                    duration=duration,
                                    check_limits=check_limits)
@@ -440,14 +465,10 @@ class KTHUarm(object):
         """ Activates/Deactivates the pump.
             @param pump_state - True = pump on, False = pump off
         """
+        self._check_connection()
         self._uarm.pump_control(pump_status)
         self._pump_status = pump_status
 
-    def is_sucking(self):
-        """ Returns whether the pump is turned on or not.
-            @param bool - True if pump is on, else False
-        """
-        return self._pump_status
 
 def recordJointValues(arm, timeout):
     joint_values = []
