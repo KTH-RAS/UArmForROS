@@ -107,12 +107,12 @@ class ROSKTHUarmBridge(object):
                                                              dz=target_position.z,
                                                              dtheta=theta,
                                                              interpolation_type=interpolation_type,
-                                                             duration=duration,
+                                                             duration=duration.to_sec(),
                                                              check_limits=check_limits)
             else:
                 success = self._uarm.move_cartesian(x=target_position.x, y=target_position.y,
                                                     z=target_position.z, theta=theta,
-                                                    interpolation_type=interpolation_type, duration=duration,
+                                                    interpolation_type=interpolation_type, duration=duration.to_sec(),
                                                     check_limits=check_limits)
 
             response = MoveToResponse()
