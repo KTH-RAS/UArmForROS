@@ -191,3 +191,5 @@ When launching ```kth_uarm_core.py``` from a launch file, you can set the follow
   ```
    Default: 10
   ```
+
+An example of how this can be achieved is offered in ```launch/kth_uarm.launch```. Under ```config/kth_uarm_core_config.yaml``` you will find a simple configuration file that is loaded by the ```kth_uarm``` launch file with the required parameters.

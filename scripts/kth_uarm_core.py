@@ -294,6 +294,8 @@ if __name__ == '__main__':
     rospy.Service("uarm/pump", Pump, uarm_bridge.handle_pump)
     rospy.Service("uarm/attach_servos", AttachDetach, uarm_bridge.handle_attach_detach)
 
+    rospy.loginfo("KTH uArm core initialized successfully!")
+    
     publisher_rate = rospy.Rate(publishing_frequency)
     while not rospy.is_shutdown():
         uarm_bridge.publish_state()
