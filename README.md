@@ -1,5 +1,5 @@
 # KTH uArm package
-This is the official KTH-RAS uarm ROS package, based on the original ufactory software, designed by Joey Song ( joey@ufactory.cc / astainsong@gmail.com) and **heavily** improved upon by Joshua Haustein (haustein@kth.se). It is the favored way of interaction with the uarm in the RAS course. 
+This is the official KTH-RAS uarm ROS package, based on the original ufactory software, designed by Joey Song ( joey@ufactory.cc / astainsong@gmail.com) and **heavily** improved upon by Joshua Haustein (haustein@kth.se). It is the favored way of interaction with the uarm in the RAS course.
 
 ## 1. Installation
 ---
@@ -52,47 +52,47 @@ source ~/.bashrc
 ---
 ### 3.1 Node
 - `kth_uarm_core.py` is the main node. Run this node before anything else.
-    
+
     **Step 1**: Connect uArm
-    
+
     Set up ROS enviroment at first
-    ```bash 
+    ```bash
     roscore
     ```
     Open another shall to connect uArm before use.
-    ```bash 
+    ```bash
     rosrun uarm kth_uarm_core.py  // this will find the uarm automatically
     ```
-    
+
     **Step 2**: Calibrate
-    
+
     The first time you use the node, you will be prompted to calibrate the arm:
     ```
     Please calibrate the uArm. Check the wiki for instructions!
     Please move the arm into the calibration configuration. Once this is done, type y:
     ```
     The calibration configuration can be set as in the official ufactory documentation:
-    
+
     | Steps | Movement |
     | :---: | :---: |
     | <img src="http://docs.ufactory.cc/img/cli/calibration_pos_step1.png" width="350"> | <img src="http://docs.ufactory.cc/img/cli/calibration_position1.gif" width="350"> |
     | <img src="http://docs.ufactory.cc/img/cli/calibration_pos_step2.png" width="350"> | <img src="http://docs.ufactory.cc/img/cli/calibration_position2.gif" width="350"> |
-    
+
     Once in the final position, type y and press enter.
-    
+
 ### 3.2 Services
 
 The KTH uArm package includes the following set of services:
 
 - /uarm/attach_servos
     ```
-      Service type: `uarm/AttachDetach`. 
+      Service type: `uarm/AttachDetach`.
       Data: bool attach
             ---
             bool attach
     ```
     Set the boolean to true to attach the servos, false to detach. While detached, you can move the uArm manually.
-  
+
 - `/uarm/move_to` - Send a cartesian command to the uArm.
     ```
     Service type: `uarm/MoveTo`
@@ -119,21 +119,21 @@ The KTH uArm package includes the following set of services:
           duration elapsed
           bool error
     ```
-    This service allows you to move the end-effector in cartesian space. You will be able to choose an interpolation mode, and if you want to move in absolute coordinates, or relative to your currently measured pose. Note that choosing `NO_INTERPOLATION` will command the servos directly to the final configuration, resulting in a brusque movement. 
-    The service also allows you to set the desired orientation of the end-effector. If this is of no use to you, you can ser the `ignore_orientation` flag to true. 
-    
-    The service returns the final position of the end-effector, and wheter an error occurred. 
-    
--   `/uarm/pump` - control the pump. 
+    This service allows you to move the end-effector in cartesian space. You will be able to choose an interpolation mode, and if you want to move in absolute coordinates, or relative to your currently measured pose. Note that choosing `NO_INTERPOLATION` will command the servos directly to the final configuration, resulting in a brusque movement.
+    The service also allows you to set the desired orientation of the end-effector. If this is of no use to you, you can ser the `ignore_orientation` flag to true.
+
+    The service returns the final position of the end-effector, and wheter an error occurred.
+
+-   `/uarm/pump` - control the pump.
       ```
-      Message_type: `uarm/Pump`. 
+      Message_type: `uarm/Pump`.
       Data: bool pump_status
             ---
             bool pump_status
       ```
       Call this service to turn the pump on or off (`pump_status` respectively set to true or false).
 
--    `/uarm/move_to_joints` - Send the arm to a configuration in joint space. 
+-    `/uarm/move_to_joints` - Send the arm to a configuration in joint space.
        ```
        Message_type: uarm/MoveToJoints
        Data: int32 ABSOLUTE_MOVEMENT=0
@@ -158,7 +158,7 @@ The KTH uArm package includes the following set of services:
              bool error
        ```
        This service operates similarly to the move_to service, but for a desired joint configuration.
-   
+
 ### 3.3 Topics
 
 -      /uarm/joint_state
@@ -166,12 +166,12 @@ The KTH uArm package includes the following set of services:
        Message_type: sensor_msgs/JointState
        ```
        The current arm configuration is publish in a ROS standard way at a user-defined frequency.
-       
+
 ### 3.4 Node parameters
 
 When launching ```kth_uarm_core.py``` from a launch file, you can set the following parameters:
 
-- joint_state_topic_name: topic where the uArm joint state is published. 
+- joint_state_topic_name: topic where the uArm joint state is published.
   ```
    Default: /uarm/joint_state
   ```
@@ -191,53 +191,3 @@ When launching ```kth_uarm_core.py``` from a launch file, you can set the follow
   ```
    Default: 10
   ```
-
-## 4. Visualization in RViz
----
-### 4.1 Functions
-
-- Display -- display.launch: This function will display robot movement in realtime when you manually move uArm
-- Control -- control.launch: This function will allow you control the end-effector movement in 3 DOF along x,y,z axis.
-
-### 4.2 Launch and Run
--**Step 1**: Set up ROS enviroment in **one** shall
-```
-roscore
-```
-In the **second** shall, connect uArm and set the listen mode as shown above
-```
-rosrun uarm uarm_core.py connect  // connect uArm
-e                                 // transfer to monitor mode
-```
--**Step 2**: Luanch
- 
-a) For visualization function, in the **third** shall, run
-
-    roslaunch uarm display.launch
-
-b) Or for control function, in the **third** shall, run
-
-    roslaunch uarm control.launch
-
--**Step 3**: Display and control:
-Open rviz to view robot in the **fourth** shall
-```
-rosrun rviz rviz
-```
-For both functions, import robot model in "Displays" panel on the left: 
-
-```
-Add -> RobotModel           // click "add" and choose "RobotModel"
-set Cell Size -> 0.1        // change "Cell Size" to 0.1 in "Grid"
-set Fixed Frame -> base     // change "Fixed Frame" to base in "Global Options"
-```
-a) For Display function, right now a robot will display in the main window
-
-b) For Control function, stop Display function and set
-
-```
-Add -> InteractiveMarker                  // click "add" and choose "InteractiveMarkers"
-Update Topic -> /uarm_controller/update   // change "Update topic" in "InteractiveMarkers"
-```
-Drag 3 pairs of arrows to control uArm along x, y, z axis.
-
