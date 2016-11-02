@@ -193,3 +193,21 @@ When launching ```kth_uarm_core.py``` from a launch file, you can set the follow
   ```
 
 An example of how this can be achieved is offered in ```launch/kth_uarm.launch```. Under ```config/kth_uarm_core_config.yaml``` you will find a simple configuration file that is loaded by the ```kth_uarm``` launch file with the required parameters.
+
+## 4.0 Troubleshooting
+-----
+### 4.1 Reported position/joint angles are far off.
+If the reported end-effector position or the reported joint angles are far off, i.e. more than 5-7 degrees off, than you might have to recalibrate the firmware. Mount your arm on the legs it was shipped with and make sure it has sufficient space to move in all directions - it will move each joint from the lower to the upper limit. 
+
+To start the calibration run:
+```bash
+$ uarm-calibrate
+```
+and follow the instructions on the screen. The arm will first move around for a while. Once it is done, a prompt will appear asking you to move the arm in a calibration configuration. This is the same configuration as shown in 3.1. Once you moved the arm in this configuration, confirm and the calibration is finished.
+
+**If this did not solve your issue, do not do this again! Contact us instead.**
+
+### 4.2 uArm often refuses to move.
+This may be due to violation of joint limits. We do not recommend to move the arm with ```check_limits=False```. Instead you can check whether the joint limits of your arm are different from ours. Open the file 
+https://github.com/KTH-RAS/UArmForROS/blob/master/python/ros_kth_uarm/kth_uarm.py
+and compare the values assigned to LOWER_LIMITS and UPPER_LIMITS to the limits of your arm. You can see the limits of your arm by detaching the servos and manually moving the servos to their limits. In case your servo can safely be moved outside of the limits in the file, you may change them in your local copy. **Note, however, that changing the limits incorrectly may damage the arm!**
