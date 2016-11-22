@@ -161,12 +161,12 @@ class ROSKTHUarmBridge(object):
             if move_mode == request.RELATIVE_MOVEMENT:
                 success = self._uarm.move_relative(*target_configuration,
                                                    interpolation_type=interpolation_type,
-                                                   duration=duration,
+                                                   duration=duration.to_sec(),
                                                    check_limits=check_limits)
             else:
                 success = self._uarm.move(*target_configuration,
                                           interpolation_type=interpolation_type,
-                                          duration=duration,
+                                          duration=duration.to_sec(),
                                           check_limits=check_limits)
 
             response = MoveToJointsResponse()
