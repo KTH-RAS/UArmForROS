@@ -73,11 +73,12 @@ source ~/.bashrc
     ```
     The calibration configuration can be set as in the official ufactory documentation:
 
-    | Steps | Movement |
-    | :---: | :---: |
-    | <img src="http://docs.ufactory.cc/img/cli/calibration_pos_step1.png" width="350"> | <img src="http://docs.ufactory.cc/img/cli/calibration_position1.gif" width="350"> |
-    | <img src="http://docs.ufactory.cc/img/cli/calibration_pos_step2.png" width="350"> | <img src="http://docs.ufactory.cc/img/cli/calibration_position2.gif" width="350"> |
-
+    <img src="https://uarmdocs.readthedocs.io/img/cli/calibration_position1.gif" width="450">
+    
+    The same procedure seen from the back:
+    
+    <img src="https://uarmdocs.readthedocs.io/img/cli/calibration_position2.gif" width="450">
+    
     Once in the final position, type y and press enter.
 
 ### 3.2 Services
